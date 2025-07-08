@@ -928,3 +928,875 @@ def sample_sites():
             city="Sunnyville",
             state="CA",
             postal_code="90210",
+            coordinate=Coordinate(lat=34.0522, lng=-118.2437)
+        ),
+        Site(
+            id=2,
+            capacity=6.0,
+            panels=20,
+            address="456 Energy Ave",
+            city="Power City",
+            state="TX",
+            postal_code="75001",
+            coordinate=Coordinate(lat=32.7767, lng=-96.7970)
+        ),
+        Site(
+            id=3,
+            capacity=3.2,
+            panels=8,
+            address="789 Green Way",
+            city="Eco Town",
+            state="FL",
+            postal_code="33101"
+        )
+    ]
+
+
+class TestSiteDaoRedis:
+    """Test cases for Site DAO Redis implementation."""
+    
+    def test_insert_and_find_by_id(self, site_dao, sample_site):
+        """Test inserting and retrieving a site."""
+        # Insert site
+        site_dao.insert(sample_site)
+        
+        # Retrieve site
+        retrieved_site = site_dao.find_by_id(sample_site.id)
+        
+        assert retrieved_site is not None
+        assert retrieved_site == sample_site
+        assert retrieved_site.coordinate.lat == sample_site.coordinate.lat
+        assert retrieved_site.coordinate.lng == sample_site.coordinate.lng
+    
+    def test_insert_duplicate_raises_error(self, site_dao, sample_site):
+        """Test that inserting duplicate site raises error."""
+        # Insert site
+        site_dao.insert(sample_site)
+        
+        # Try to insert same site again
+        with pytest.raises(ValueError, match="already exists"):
+            site_dao.insert(sample_site)
+    
+    def test_find_nonexistent_site_returns_none(self, site_dao):
+        """Test that finding non-existent site returns None."""
+        result = site_dao.find_by_id(999)
+        assert result is None
+    
+    def test_insert_many(self, site_dao, sample_sites):
+        """Test inserting multiple sites."""
+        site_dao.insert_many(*sample_sites)
+        
+        # Verify all sites were inserted
+        for site in sample_sites:
+            retrieved = site_dao.find_by_id(site.id)
+            assert retrieved == site
+        
+        # Check count
+        assert site_dao.count() == len(sample_sites)
+    
+    def test_find_all(self, site_dao, sample_sites):
+        """Test retrieving all sites."""
+        # Insert sites
+        site_dao.insert_many(*sample_sites)
+        
+        # Retrieve all
+        all_sites = site_dao.find_all()
+        
+        assert len(all_sites) == len(sample_sites)
+        assert all_sites == set(sample_sites)
+    
+    def test_update_site(self, site_dao, sample_site):
+        """Test updating a site."""
+        # Insert original site
+        site_dao.insert(sample_site)
+        
+        # Create updated site
+        updated_site = Site(
+            id=sample_site.id,
+            capacity=5.0,  # Changed
+            panels=15,     # Changed
+            address=sample_site.address,
+            city=sample_site.city,
+            state=sample_site.state,
+            postal_code=sample_site.postal_code,
+            coordinate=sample_site.coordinate
+        )
+        
+        # Update site
+        site_dao.update(updated_site)
+        
+        # Retrieve and verify
+        retrieved = site_dao.find_by_id(sample_site.id)
+        assert retrieved == updated_site
+        assert retrieved.capacity == 5.0
+        assert retrieved.panels == 15
+    
+    def test_update_nonexistent_site_raises_error(self, site_dao, sample_site):
+        """Test that updating non-existent site raises error."""
+        with pytest.raises(ValueError, match="does not exist"):
+            site_dao.update(sample_site)
+    
+    def test_delete_site(self, site_dao, sample_site):
+        """Test deleting a site."""
+        # Insert site
+        site_dao.insert(sample_site)
+        assert site_dao.exists(sample_site.id)
+        
+        # Delete site
+        deleted = site_dao.delete(sample_site.id)
+        assert deleted is True
+        
+        # Verify deletion
+        assert not site_dao.exists(sample_site.id)
+        assert site_dao.find_by_id(sample_site.id) is None
+        assert site_dao.count() == 0
+    
+    def test_delete_nonexistent_site_returns_false(self, site_dao):
+        """Test that deleting non-existent site returns False."""
+        deleted = site_dao.delete(999)
+        assert deleted is False
+    
+    def test_exists(self, site_dao, sample_site):
+        """Test checking if site exists."""
+        # Should not exist initially
+        assert not site_dao.exists(sample_site.id)
+        
+        # Insert and check
+        site_dao.insert(sample_site)
+        assert site_dao.exists(sample_site.id)
+        
+        # Delete and check
+        site_dao.delete(sample_site.id)
+        assert not site_dao.exists(sample_site.id)
+    
+    def test_count(self, site_dao, sample_sites):
+        """Test counting sites."""
+        assert site_dao.count() == 0
+        
+        # Insert sites one by one
+        for i, site in enumerate(sample_sites, 1):
+            site_dao.insert(site)
+            assert site_dao.count() == i
+    
+    def test_find_by_capacity_range(self, site_dao, sample_sites):
+        """Test finding sites by capacity range."""
+        site_dao.insert_many(*sample_sites)
+        
+        # Find sites with capacity between 4.0 and 5.0
+        sites = site_dao.find_by_capacity_range(4.0, 5.0)
+        assert len(sites) == 1
+        assert sites[0].id == 1  # Only site 1 has capacity 4.5
+        
+        # Find sites with capacity between 3.0 and 7.0
+        sites = site_dao.find_by_capacity_range(3.0, 7.0)
+        assert len(sites) == 3  # All sites
+    
+    def test_find_by_state(self, site_dao, sample_sites):
+        """Test finding sites by state."""
+        site_dao.insert_many(*sample_sites)
+        
+        # Find sites in CA
+        ca_sites = site_dao.find_by_state("CA")
+        assert len(ca_sites) == 1
+        assert ca_sites[0].state == "CA"
+        
+        # Find sites in TX
+        tx_sites = site_dao.find_by_state("TX")
+        assert len(tx_sites) == 1
+        assert tx_sites[0].state == "TX"
+        
+        # Test case insensitive
+        ca_sites_lower = site_dao.find_by_state("ca")
+        assert len(ca_sites_lower) == 1
+    
+    def test_get_total_capacity(self, site_dao, sample_sites):
+        """Test calculating total capacity."""
+        assert site_dao.get_total_capacity() == 0
+        
+        site_dao.insert_many(*sample_sites)
+        
+        expected_total = sum(site.capacity for site in sample_sites)
+        assert site_dao.get_total_capacity() == expected_total
+    
+    def test_site_without_coordinates(self, site_dao):
+        """Test site without coordinate data."""
+        site = Site(
+            id=100,
+            capacity=2.5,
+            panels=6,
+            address="No GPS Street",
+            city="Location Unknown",
+            state="XX",
+            postal_code="00000"
+        )
+        
+        site_dao.insert(site)
+        retrieved = site_dao.find_by_id(100)
+        
+        assert retrieved == site
+        assert retrieved.coordinate is None
+
+
+class TestKeyManager:
+    """Test cases for key manager."""
+    
+    def test_key_generation(self):
+        """Test that keys are generated correctly."""
+        km = KeyManager(key_prefix="test:")
+        
+        assert km.site_key(1) == "test:site:1"
+        assert km.sites_set_key() == "test:sites"
+        assert km.site_stats_key(1) == "test:site_stats:1"
+        assert km.capacity_leaderboard_key() == "test:capacity_leaderboard"
+        assert km.geo_sites_key() == "test:geo_sites"
+```
+
+### Create tests/test_api_sites.py
+```python
+"""Tests for Sites API endpoints."""
+
+import pytest
+import json
+from flask import Flask
+
+from redisolar.app import create_app
+from redisolar.dao.site_dao_redis import SiteDaoRedis
+from redisolar.dao.redis_dao import RedisConnection
+from redisolar.models.site import Site, Coordinate
+
+
+@pytest.fixture
+def app():
+    """Create test application."""
+    app = create_app('testing')
+    return app
+
+
+@pytest.fixture
+def client(app):
+    """Create test client."""
+    return app.test_client()
+
+
+@pytest.fixture
+def site_dao():
+    """Create Site DAO for testing."""
+    return SiteDaoRedis()
+
+
+@pytest.fixture
+def sample_site_data():
+    """Sample site data for API testing."""
+    return {
+        "id": 1,
+        "capacity": 4.5,
+        "panels": 12,
+        "address": "123 Solar Street",
+        "city": "Sunnyville",
+        "state": "CA",
+        "postal_code": "90210",
+        "coordinate": {
+            "lat": 34.0522,
+            "lng": -118.2437
+        }
+    }
+
+
+@pytest.fixture
+def sample_site_data_no_coords():
+    """Sample site data without coordinates."""
+    return {
+        "id": 2,
+        "capacity": 3.2,
+        "panels": 8,
+        "address": "456 Energy Ave",
+        "city": "Power City",
+        "state": "TX",
+        "postal_code": "75001"
+    }
+
+
+@pytest.fixture(autouse=True)
+def cleanup_redis():
+    """Clean up Redis before and after each test."""
+    # Clean up before test
+    redis_conn = RedisConnection.get_connection()
+    redis_conn.flushdb()
+    
+    yield
+    
+    # Clean up after test
+    redis_conn.flushdb()
+
+
+class TestSitesAPI:
+    """Test cases for Sites API."""
+    
+    def test_get_all_sites_empty(self, client):
+        """Test getting all sites when none exist."""
+        response = client.get('/api/sites/')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert data['sites'] == []
+        assert data['count'] == 0
+        assert data['total_capacity'] == 0
+    
+    def test_create_site(self, client, sample_site_data):
+        """Test creating a new site."""
+        response = client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        
+        assert response.status_code == 201
+        data = response.get_json()
+        assert 'Site 1 created successfully' in data['message']
+        assert data['site']['id'] == 1
+        assert data['site']['capacity'] == 4.5
+    
+    def test_create_site_without_coordinates(self, client, sample_site_data_no_coords):
+        """Test creating a site without coordinates."""
+        response = client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data_no_coords),
+            content_type='application/json'
+        )
+        
+        assert response.status_code == 201
+        data = response.get_json()
+        assert data['site']['coordinate'] is None
+    
+    def test_create_site_invalid_data(self, client):
+        """Test creating site with invalid data."""
+        invalid_data = {
+            "id": "invalid",  # Should be integer
+            "capacity": -1,   # Should be positive
+            "panels": 0       # Should be positive
+        }
+        
+        response = client.post(
+            '/api/sites/',
+            data=json.dumps(invalid_data),
+            content_type='application/json'
+        )
+        
+        assert response.status_code == 400
+        data = response.get_json()
+        assert 'Validation failed' in data['error']
+    
+    def test_create_duplicate_site(self, client, sample_site_data):
+        """Test creating duplicate site returns error."""
+        # Create first site
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        
+        # Try to create same site again
+        response = client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        
+        assert response.status_code == 409
+        data = response.get_json()
+        assert 'already exists' in data['error']
+    
+    def test_get_site_by_id(self, client, sample_site_data):
+        """Test getting a specific site by ID."""
+        # Create site first
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        
+        # Get site by ID
+        response = client.get('/api/sites/1')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert data['id'] == 1
+        assert data['capacity'] == 4.5
+        assert data['coordinate']['lat'] == 34.0522
+    
+    def test_get_nonexistent_site(self, client):
+        """Test getting non-existent site returns 404."""
+        response = client.get('/api/sites/999')
+        assert response.status_code == 404
+        
+        data = response.get_json()
+        assert 'not found' in data['error']
+    
+    def test_update_site(self, client, sample_site_data):
+        """Test updating an existing site."""
+        # Create site first
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        
+        # Update site
+        updated_data = sample_site_data.copy()
+        updated_data['capacity'] = 5.0
+        updated_data['panels'] = 15
+        
+        response = client.put(
+            '/api/sites/1',
+            data=json.dumps(updated_data),
+            content_type='application/json'
+        )
+        
+        assert response.status_code == 200
+        data = response.get_json()
+        assert 'updated successfully' in data['message']
+        assert data['site']['capacity'] == 5.0
+        assert data['site']['panels'] == 15
+    
+    def test_update_nonexistent_site(self, client, sample_site_data):
+        """Test updating non-existent site returns 404."""
+        response = client.put(
+            '/api/sites/999',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        
+        assert response.status_code == 404
+        data = response.get_json()
+        assert 'not found' in data['error']
+    
+    def test_delete_site(self, client, sample_site_data):
+        """Test deleting a site."""
+        # Create site first
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        
+        # Delete site
+        response = client.delete('/api/sites/1')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert 'deleted successfully' in data['message']
+        
+        # Verify site is gone
+        response = client.get('/api/sites/1')
+        assert response.status_code == 404
+    
+    def test_delete_nonexistent_site(self, client):
+        """Test deleting non-existent site returns 404."""
+        response = client.delete('/api/sites/999')
+        assert response.status_code == 404
+    
+    def test_get_all_sites_with_data(self, client, sample_site_data, sample_site_data_no_coords):
+        """Test getting all sites when some exist."""
+        # Create two sites
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data_no_coords),
+            content_type='application/json'
+        )
+        
+        # Get all sites
+        response = client.get('/api/sites/')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert data['count'] == 2
+        assert data['total_capacity'] == 4.5 + 3.2  # Sum of capacities
+        assert len(data['sites']) == 2
+    
+    def test_search_sites_by_state(self, client, sample_site_data, sample_site_data_no_coords):
+        """Test searching sites by state."""
+        # Create sites in different states
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data_no_coords),
+            content_type='application/json'
+        )
+        
+        # Search for CA sites
+        response = client.get('/api/sites/search?state=CA')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert data['count'] == 1
+        assert data['sites'][0]['state'] == 'CA'
+    
+    def test_search_sites_by_capacity_range(self, client, sample_site_data, sample_site_data_no_coords):
+        """Test searching sites by capacity range."""
+        # Create sites with different capacities
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data_no_coords),
+            content_type='application/json'
+        )
+        
+        # Search for sites with capacity 4.0-5.0
+        response = client.get('/api/sites/search?min_capacity=4.0&max_capacity=5.0')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert data['count'] == 1
+        assert data['sites'][0]['capacity'] == 4.5
+    
+    def test_get_site_stats(self, client, sample_site_data, sample_site_data_no_coords):
+        """Test getting site statistics."""
+        # Create sites
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data),
+            content_type='application/json'
+        )
+        client.post(
+            '/api/sites/',
+            data=json.dumps(sample_site_data_no_coords),
+            content_type='application/json'
+        )
+        
+        # Get stats
+        response = client.get('/api/sites/stats')
+        assert response.status_code == 200
+        
+        data = response.get_json()
+        assert data['total_sites'] == 2
+        assert data['total_capacity'] == 4.5 + 3.2
+        assert data['average_capacity'] == (4.5 + 3.2) / 2
+        assert data['max_capacity'] == 4.5
+        assert data['min_capacity'] == 3.2
+```
+
+---
+
+## Step 10: Sample Data Loader
+
+### Create scripts/load_sample_data.py
+```python
+"""Load sample data into Redis for development and testing."""
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from redisolar.dao.site_dao_redis import SiteDaoRedis
+from redisolar.models.site import Site, Coordinate
+from redisolar.dao.redis_dao import RedisConnection
+
+
+def load_sample_sites():
+    """Load sample solar sites into Redis."""
+    
+    # Sample sites data
+    sites_data = [
+        {
+            "id": 1,
+            "capacity": 4.5,
+            "panels": 12,
+            "address": "123 Solar Street",
+            "city": "Sunnyville",
+            "state": "CA",
+            "postal_code": "90210",
+            "coordinate": Coordinate(lat=34.0522, lng=-118.2437)
+        },
+        {
+            "id": 2,
+            "capacity": 6.0,
+            "panels": 20,
+            "address": "456 Energy Avenue",
+            "city": "Power City",
+            "state": "TX",
+            "postal_code": "75001",
+            "coordinate": Coordinate(lat=32.7767, lng=-96.7970)
+        },
+        {
+            "id": 3,
+            "capacity": 3.2,
+            "panels": 8,
+            "address": "789 Green Way",
+            "city": "Eco Town",
+            "state": "FL",
+            "postal_code": "33101",
+            "coordinate": Coordinate(lat=25.7617, lng=-80.1918)
+        },
+        {
+            "id": 4,
+            "capacity": 7.8,
+            "panels": 26,
+            "address": "321 Renewable Road",
+            "city": "Solar City",
+            "state": "AZ",
+            "postal_code": "85001",
+            "coordinate": Coordinate(lat=33.4484, lng=-112.0740)
+        },
+        {
+            "id": 5,
+            "capacity": 2.1,
+            "panels": 6,
+            "address": "654 Clean Lane",
+            "city": "Green Valley",
+            "state": "OR",
+            "postal_code": "97201",
+            "coordinate": Coordinate(lat=45.5152, lng=-122.6784)
+        }
+    ]
+    
+    # Create Site objects
+    sites = []
+    for site_data in sites_data:
+        sites.append(Site(**site_data))
+    
+    # Initialize DAO and load data
+    site_dao = SiteDaoRedis()
+    
+    try:
+        # Check if data already exists
+        if site_dao.count() > 0:
+            print(f"Warning: {site_dao.count()} sites already exist in Redis.")
+            response = input("Do you want to clear existing data and reload? (y/N): ")
+            if response.lower() != 'y':
+                print("Aborted.")
+                return
+            
+            # Clear existing sites
+            all_sites = site_dao.find_all()
+            for site in all_sites:
+                site_dao.delete(site.id)
+            print(f"Cleared {len(all_sites)} existing sites.")
+        
+        # Load new sites
+        site_dao.insert_many(*sites)
+        print(f"Successfully loaded {len(sites)} sites into Redis.")
+        
+        # Display summary
+        print("\nLoaded sites:")
+        for site in sites:
+            print(f"  - Site {site.id}: {site.capacity}kW, {site.panels} panels, {site.city}, {site.state}")
+        
+        print(f"\nTotal capacity: {site_dao.get_total_capacity()}kW")
+        
+    except Exception as e:
+        print(f"Error loading sample data: {e}")
+        return False
+    
+    return True
+
+
+def main():
+    """Main function."""
+    print("Loading sample solar sites into Redis...")
+    
+    # Test Redis connection
+    if not RedisConnection.test_connection():
+        print("Error: Could not connect to Redis. Please ensure Redis is running.")
+        return
+    
+    success = load_sample_sites()
+    
+    if success:
+        print("\nSample data loaded successfully!")
+        print("You can now test the API endpoints:")
+        print("  GET http://localhost:8081/api/sites/")
+        print("  GET http://localhost:8081/api/sites/stats")
+        print("  GET http://localhost:8081/api/sites/search?state=CA")
+    else:
+        print("Failed to load sample data.")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## Step 11: Running and Testing Everything
+
+### Update requirements.txt
+```txt
+Flask==2.3.3
+redis==5.0.1
+python-dotenv==1.0.0
+marshmallow==3.20.1
+marshmallow-dataclass==8.6.0
+dataclasses-json==0.6.1
+pytest==7.4.2
+python-decouple==3.8
+```
+
+### Create Makefile (Optional)
+```makefile
+.PHONY: help env dev test load clean
+
+help:		## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $1, $2}'
+
+env:		## Set up virtual environment and install dependencies
+	python3.8 -m venv env
+	env/bin/pip install --upgrade pip
+	env/bin/pip install -r requirements.txt
+	env/bin/pip install -e .
+
+dev:		## Run development server
+	env/bin/python redisolar/app.py
+
+test:		## Run tests
+	env/bin/pytest tests/ -v
+
+load:		## Load sample data
+	env/bin/python scripts/load_sample_data.py
+
+clean:		## Clean up Redis test data
+	redis-cli -n 1 FLUSHDB
+
+redis-start:	## Start Redis using Docker
+	docker run -d --name redis-redisolar -p 6379:6379 redis/redis-stack:latest
+
+redis-stop:	## Stop Redis Docker container
+	docker stop redis-redisolar && docker rm redis-redisolar
+```
+
+### Running the Application
+
+1. **Start Redis** (if not already running):
+```bash
+make redis-start
+# or manually:
+docker run -d --name redis-redisolar -p 6379:6379 redis/redis-stack:latest
+```
+
+2. **Set up environment**:
+```bash
+make env
+# or manually:
+python3.8 -m venv env
+source env/bin/activate
+pip install -r requirements.txt
+pip install -e .
+```
+
+3. **Load sample data**:
+```bash
+make load
+# or manually:
+python scripts/load_sample_data.py
+```
+
+4. **Run the application**:
+```bash
+make dev
+# or manually:
+python redisolar/app.py
+```
+
+5. **Run tests**:
+```bash
+make test
+# or manually:
+pytest tests/ -v
+```
+
+### Testing the API
+
+With the application running, test these endpoints:
+
+```bash
+# Get all sites
+curl http://localhost:8081/api/sites/
+
+# Get specific site
+curl http://localhost:8081/api/sites/1
+
+# Create new site
+curl -X POST http://localhost:8081/api/sites/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": 6,
+    "capacity": 5.5,
+    "panels": 18,
+    "address": "999 New Solar St",
+    "city": "Future City",
+    "state": "NY",
+    "postal_code": "10001"
+  }'
+
+# Search by state
+curl "http://localhost:8081/api/sites/search?state=CA"
+
+# Search by capacity range
+curl "http://localhost:8081/api/sites/search?min_capacity=4.0&max_capacity=6.0"
+
+# Get statistics
+curl http://localhost:8081/api/sites/stats
+
+# Update site
+curl -X PUT http://localhost:8081/api/sites/1 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": 1,
+    "capacity": 5.0,
+    "panels": 15,
+    "address": "123 Solar Street",
+    "city": "Sunnyville",
+    "state": "CA",
+    "postal_code": "90210"
+  }'
+
+# Delete site
+curl -X DELETE http://localhost:8081/api/sites/6
+```
+
+---
+
+## 🎉 Lesson 2 Complete!
+
+You've successfully:
+- ✅ Created comprehensive domain models with dataclasses
+- ✅ Implemented data validation with Marshmallow schemas
+- ✅ Built a complete Site DAO using Redis Hashes
+- ✅ Created a full REST API for site management
+- ✅ Written comprehensive tests for both DAO and API layers
+- ✅ Implemented Redis key management patterns
+- ✅ Created a sample data loader for development
+
+### Key Redis Concepts Learned
+1. **Redis Hashes**: Perfect for storing structured objects
+2. **Redis Sets**: Used for maintaining collections of IDs
+3. **Atomic Operations**: Using pipelines for multi-step operations
+4. **Key Naming Conventions**: Structured, predictable key patterns
+5. **Data Serialization**: Converting between Python objects and Redis storage
+
+### What's Next?
+In **Lesson 3**, we'll:
+- Implement Redis Sorted Sets for leaderboards
+- Add time-series data with Redis TimeSeries
+- Create meter reading storage and retrieval
+- Build performance analytics and rankings
+- Implement data aggregation patterns
+
+### Key Takeaways
+1. **Data Modeling**: Use dataclasses for clean, validated domain models
+2. **Separation of Concerns**: Keep models, schemas, DAOs, and APIs separate
+3. **Testing Strategy**: Test both unit (DAO) and integration (API) levels
+4. **Error Handling**: Proper validation and error responses
+5. **Redis Patterns**: Hashes for objects, Sets for collections, Pipelines for atomicity

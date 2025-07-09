@@ -780,3 +780,4 @@ def create_app(config_name: str = 'dev') -> Flask:
                 ],
                 'timeseries': [
                     '
+                    
